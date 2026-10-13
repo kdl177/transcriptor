@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcriptor · SIMBAI Lab</title>
+<style>
+:root {
+  --vacio: #07070a; --placa: #101015; --linea: #24242e;
+  --texto: #ececf1; --texto2: #a3a3b5; --texto3: #80809a;
+  --lima: #c8ff00; --rojo: #f87171;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--vacio); color: var(--texto); font: 15px/1.6 "Segoe UI", system-ui, sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 40px 16px 64px; display: grid; gap: 24px; }
+h1 { margin: 0; font-size: clamp(28px, 5vw, 40px); line-height: 1.05; letter-spacing: -0.02em; }
+h1 span { color: var(--lima); }
+.marca { font: 600 12px/1 ui-monospace, Consolas, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--lima); }
+.sub { color: var(--texto2); margin: 8px 0 0; }
+.zona { border: 1.5px dashed var(--linea); border-radius: 14px; padding: 40px 20px; text-align: center; cursor: pointer; background: var(--placa); transition: border-color .15s; }
+.zona:hover, .zona.encima { border-color: var(--lima); }
+.zona strong { display: block; font-size: 17px; }
+.zona small { color: var(--texto3); }
+.opciones { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; color: var(--texto2); font-size: 14px; }
+select, button { font: inherit; color: var(--texto); background: var(--placa); border: 1px solid var(--linea); border-radius: 8px; padding: 8px 12px; }
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--lima); }
+button:disabled { opacity: .45; cursor: default; }
+button.principal { background: var(--lima); color: var(--vacio); border-color: var(--lima); font-weight: 600; }
+:focus-visible { outline: 2px solid var(--lima); outline-offset: 2px; }
+.barra { height: 6px; background: var(--linea); border-radius: 99px; overflow: hidden; }
+.barra div { height: 100%; width: 0; background: var(--lima); transition: width .3s; }
+.estado { color: var(--texto2); font-size: 14px; display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.error { color: var(--rojo); }
+.acciones { display: flex; flex-wrap: wrap; gap: 8px; }
+.texto { background: var(--placa); border: 1px solid var(--linea); border-radius: 14px; padding: 16px; max-height: 60vh; overflow: auto; }
+.seg { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 6px 0; }
+.seg time { font: 12px/1.9 ui-monospace, Consolas, monospace; color: var(--texto3); font-variant-numeric: tabular-nums; }
+.resumen { white-space: pre-wrap; background: var(--placa); border: 1px solid var(--lima); border-radius: 14px; padding: 16px; }
+.pie { color: var(--texto3); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="marca">SIMBAI Lab · Transcriptor</p>
+    <h1>Del audio al texto, <span>sin salir de tu ordenador.</span></h1>
+    <p class="sub">Reuniones, notas de voz, entrevistas o vídeos. Se transcribe aquí mismo con Whisper: nada se sube a internet.</p>
+  </header>
+
+  <label class="zona" id="zona" tabindex="0">
+    <strong>Arrastra un audio o un vídeo, o haz clic para elegirlo</strong>
+    <small>MP3, WAV, M4A, OGG (notas de voz de WhatsApp), MP4, MOV… hasta 2 GB</small>
+    <input type="file" id="archivo" accept="audio/*,video/*,.ogg,.opus,.m4a" hidden>
+  </label>
+
+  <div class="opciones">
+    <label>Calidad
+      <select id="calidad">
+        <option value="rapido">Rápida (modelo small)</option>
+        <option value="preciso">Precisa (large-v3-turbo, más lenta)</option>
+      </select>
+    </label>
+    <label>Idioma
+      <select id="idioma">
+        <option value="">Detectar solo</option>
+        <option value="es">Español</option>
+        <option value="en">Inglés</option>
+        <option value="de">Alemán</option>
+        <option value="fr">Francés</option>
+        <option value="it">Italiano</option>
+        <option value="pt">Portugués</option>
+      </select>
+    </label>
+  </div>
+
+  <section id="progreso" hidden>
+    <div class="barra"><div id="relleno"></div></div>
+    <div class="estado"><span id="estado" role="status"></span><span id="nombre"></span></div>
+  </section>
+
+  <section id="resultado" hidden>
+    <div class="acciones">
+      <button id="copiar">Copiar texto</button>
+      <button id="txt">Descargar .txt</button>
+      <button id="srt">Descargar subtítulos .srt</button>
+      <button id="resumir" class="principal">Resumir con IA local</button>
+    </div>
+  </section>
+
+  <div id="resumen" class="resumen" hidden aria-live="polite"></div>
+  <div id="texto" class="texto" hidden></div>
+
+  <p class="pie">Hecho por SIMBAI · Código tuyo, sin cuentas ni suscripciones. El resumen usa Ollama en este equipo.</p>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let segmentos = [];
+let nombreArchivo = "transcripcion";
+
+const reloj = (s, srt) => {
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), seg = Math.floor(s % 60);
+  const dd = (n) => String(n).padStart(2, "0");
+  if (srt) return `${dd(h)}:${dd(m)}:${dd(seg)},${String(Math.round((s % 1) * 1000)).padStart(3, "0")}`;
+  return h ? `${h}:${dd(m)}:${dd(seg)}` : `${m}:${dd(seg)}`;
+};
+const textoPlano = () => segmentos.map((s) => s.texto).join("\n");
+const descargar = (contenido, nombre) => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([contenido], { type: "text/plain;charset=utf-8" }));
+  a.download = nombre;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+function pintar(t) {
+  $("relleno").style.width = `${Math.round(t.progreso * 100)}%`;
+  const pct = t.estado === "transcribiendo" ? ` · ${Math.round(t.progreso * 100)}%` : "";
+  $("estado").textContent = t.estado === "error" ? t.error : `${t.estado[0].toUpperCase()}${t.estado.slice(1)}${pct}`;
+  $("estado").classList.toggle("error", t.estado === "error");
+  if (t.segmentos.length !== segmentos.length) {
+    for (const s of t.segmentos.slice(segmentos.length)) {
+      const fila = document.createElement("div");
+      fila.className = "seg";
+      const hora = document.createElement("time");
+      hora.textContent = reloj(s.ini);
+      const p = document.createElement("span");
+      p.textContent = s.texto;
+      fila.append(hora, p);
+      $("texto").append(fila);
+    }
+    segmentos = t.segmentos.slice();
+    $("texto").hidden = false;
+  }
+}
+
+async function seguir(id) {
+  const t = await (await fetch(`/estado/${id}`)).json();
+  pintar(t);
+  if (t.estado === "listo") {
+    $("resultado").hidden = false;
+    $("zona").style.pointerEvents = "";
+    return;
+  }
+  if (t.estado === "error") { $("zona").style.pointerEvents = ""; return; }
+  setTimeout(() => seguir(id), 800);
+}
+
+async function enviar(archivo) {
+  if (!archivo) return;
+  nombreArchivo = archivo.name.replace(/\.[^.]+$/, "") || "transcripcion";
+  segmentos = [];
+  $("texto").replaceChildren();
+  $("texto").hidden = $("resultado").hidden = $("resumen").hidden = true;
+  $("progreso").hidden = false;
+  $("nombre").textContent = archivo.name;
+  $("zona").style.pointerEvents = "none";
+  pintar({ estado: "subiendo", progreso: 0, segmentos: [] });
+  try {
+    const r = await fetch("/transcribir", {
+      method: "POST",
+      body: archivo,
+      headers: { "X-Nombre": encodeURIComponent(archivo.name), "X-Calidad": $("calidad").value, "X-Idioma": $("idioma").value },
+    });
+    const datos = await r.json();
+    if (!r.ok) throw new Error(datos.error);
+    seguir(datos.id);
+  } catch (e) {
+    pintar({ estado: "error", error: e.message || "No se pudo enviar el archivo.", progreso: 0, segmentos: [] });
+    $("zona").style.pointerEvents = "";
+  }
+}
+
+$("archivo").addEventListener("change", (e) => enviar(e.target.files[0]));
+$("zona").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("archivo").click(); } });
+$("zona").addEventListener("dragover", (e) => { e.preventDefault(); $("zona").classList.add("encima"); });
+$("zona").addEventListener("dragleave", () => $("zona").classList.remove("encima"));
+$("zona").addEventListener("drop", (e) => { e.preventDefault(); $("zona").classList.remove("encima"); enviar(e.dataTransfer.files[0]); });
+
+$("copiar").addEventListener("click", async () => {
+  await navigator.clipboard.writeText(textoPlano());
+  $("copiar").textContent = "Copiado";
+  setTimeout(() => ($("copiar").textContent = "Copiar texto"), 1500);
+});
+$("txt").addEventListener("click", () => descargar(textoPlano(), `${nombreArchivo}.txt`));
+$("srt").addEventListener("click", () => descargar(
+  segmentos.map((s, i) => `${i + 1}\n${reloj(s.ini, true)} --> ${reloj(s.fin, true)}\n${s.texto}\n`).join("\n"),
+  `${nombreArchivo}.srt`,
+));
+$("resumir").addEventListener("click", async () => {
+  const b = $("resumir");
+  b.disabled = true;
+  b.textContent = "Resumiendo…";
+  $("resumen").hidden = false;
+  $("resumen").textContent = "Leyendo la transcripción…";
+  try {
+    const r = await fetch("/resumir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ texto: textoPlano() }) });
+    const datos = await r.json();
+    $("resumen").textContent = r.ok ? datos.resumen : datos.error;
+  } catch {
+    $("resumen").textContent = "El transcriptor se ha cerrado. Vuelve a abrirlo con iniciar.bat.";
+  }
+  b.disabled = false;
+  b.textContent = "Resumir con IA local";
+});
+</script>
+</body>
+</html>
