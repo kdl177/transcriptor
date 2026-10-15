@@ -33,3 +33,7 @@ Variables de entorno, todas opcionales:
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python transcriptor.py
 ```
+
+## Licencia
+
+MIT. Puedes usar, copiar, modificar y distribuir el código libremente, también con fines comerciales, manteniendo el aviso de autoría. Ver [LICENSE](LICENSE).
